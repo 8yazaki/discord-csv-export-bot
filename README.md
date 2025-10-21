@@ -1,6 +1,7 @@
 # discord-csv-export-bot
 
 Discord サーバーの参加者一覧を CSV 出力するシンプルなボットです。
+このプログラムの99%はAIによる生成にて作成しました。
 
 ## 概要
 - スラッシュコマンド `/export_members` を実行すると、サーバーのメンバー一覧を CSV に出力して返信します。実装本体は [index.js](index.js) の [`client`](index.js) イベントハンドラ内にあります。

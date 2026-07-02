@@ -1,0 +1,7 @@
+name = "discord-csv-export-bot"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+
+# DISCORD_TOKEN と DISCORD_PUBLIC_KEY は secret として登録する（wrangler secret put）
+# wrangler secret put DISCORD_TOKEN
+# wrangler secret put DISCORD_PUBLIC_KEY

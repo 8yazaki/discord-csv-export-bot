@@ -1,18 +1,22 @@
 {
-  "name": "discord-csv-export-bot",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "name": "discord-csv-export-bot-cloudflare",
+  "version": "2.0.0",
+  "description": "Discord サーバーの参加者一覧を CSV 出力する、Cloudflare Workers 上で完結するボット",
+  "main": "src/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "register": "node scripts/register-commands.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@discordjs/rest": "^2.5.1",
-    "csv-writer": "^1.6.0",
-    "discord.js": "^14.21.0",
-    "dotenv": "^17.2.1"
+    "discord-interactions": "^4.4.0"
+  },
+  "devDependencies": {
+    "dotenv": "^17.2.1",
+    "wrangler": "^4.86.0"
   }
 }

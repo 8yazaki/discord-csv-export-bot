@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "tail": "wrangler tail",
-    "register": "node scripts/register-commands.js"
+    "tail": "wrangler tail"
   },
   "keywords": [],
   "author": "",
@@ -16,7 +15,6 @@
     "discord-interactions": "^4.4.0"
   },
   "devDependencies": {
-    "dotenv": "^17.2.1",
     "wrangler": "^4.86.0"
   }
 }

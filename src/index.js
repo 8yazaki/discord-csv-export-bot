@@ -4,8 +4,14 @@ const DISCORD_API = "https://discord.com/api/v10";
 
 export default {
   async fetch(request, env, ctx) {
-    if (request.method === "GET") {
+    const url = new URL(request.url);
+
+    if (request.method === "GET" && url.pathname === "/") {
       return new Response("Discord CSV Export Bot is running.", { status: 200 });
+    }
+
+    if (request.method === "POST" && url.pathname === "/register-commands") {
+      return handleRegisterCommands(request, env);
     }
 
     if (request.method !== "POST") {
@@ -42,6 +48,40 @@ export default {
     return new Response("Unknown interaction", { status: 400 });
   },
 };
+
+const SLASH_COMMANDS = [
+  {
+    name: "export_members",
+    description: "参加者の一覧をCSVで出力します",
+  },
+];
+
+// スラッシュコマンドをDiscordに登録するための管理用エンドポイント。
+// `wrangler secret put ADMIN_SECRET` で設定した値をヘッダーで渡した場合のみ実行する。
+async function handleRegisterCommands(request, env) {
+  const providedSecret = request.headers.get("x-admin-secret");
+  if (!env.ADMIN_SECRET || providedSecret !== env.ADMIN_SECRET) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  const res = await fetch(
+    `${DISCORD_API}/applications/${env.CLIENT_ID}/commands`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bot ${env.DISCORD_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(SLASH_COMMANDS),
+    }
+  );
+
+  const body = await res.text();
+  return new Response(body, {
+    status: res.status,
+    headers: { "content-type": "application/json" },
+  });
+}
 
 function jsonResponse(data) {
   return new Response(JSON.stringify(data), {

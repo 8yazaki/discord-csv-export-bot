@@ -53,6 +53,9 @@ const SLASH_COMMANDS = [
   {
     name: "export_members",
     description: "参加者の一覧をCSVで出力します",
+    // デフォルトでは「サーバー管理」権限を持つメンバーのみ実行可能（Discord側のIntegrations設定で個別に変更可能）
+    default_member_permissions: "32",
+    dm_permission: false,
   },
 ];
 
@@ -90,17 +93,28 @@ function jsonResponse(data) {
 }
 
 async function discordFetch(env, path, options = {}) {
-  const res = await fetch(`${DISCORD_API}${path}`, {
-    ...options,
-    headers: {
-      Authorization: `Bot ${env.DISCORD_TOKEN}`,
-      ...options.headers,
-    },
-  });
-  if (!res.ok) {
-    throw new Error(`Discord API error ${res.status}: ${await res.text()}`);
+  const maxRetries = 3;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = await fetch(`${DISCORD_API}${path}`, {
+      ...options,
+      headers: {
+        Authorization: `Bot ${env.DISCORD_TOKEN}`,
+        ...options.headers,
+      },
+    });
+
+    // レート制限（429）の場合は Retry-After 秒待ってからリトライする
+    if (res.status === 429 && attempt < maxRetries) {
+      const retryAfterSec = Number(res.headers.get("retry-after")) || 1;
+      await new Promise((resolve) => setTimeout(resolve, retryAfterSec * 1000));
+      continue;
+    }
+
+    if (!res.ok) {
+      throw new Error(`Discord API error ${res.status}: ${await res.text()}`);
+    }
+    return res.json();
   }
-  return res.json();
 }
 
 async function fetchAllMembers(env, guildId) {
@@ -125,7 +139,11 @@ async function fetchRoleMap(env, guildId) {
 }
 
 function csvEscape(value) {
-  const str = String(value ?? "");
+  let str = String(value ?? "");
+  // Excel/Sheets 等でフォーミュラとして評価されないよう、先頭の =+-@ やタブ・CR を無害化する
+  if (/^[=+\-@\t\r]/.test(str)) {
+    str = `'${str}`;
+  }
   if (/[",\n]/.test(str)) {
     return `"${str.replace(/"/g, '""')}"`;
   }

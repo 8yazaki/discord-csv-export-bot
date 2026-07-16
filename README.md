@@ -24,7 +24,7 @@ Discord サーバーの参加者一覧を CSV 出力するボットです。**Cl
 2. 「Bot」タブでトークンを発行
 3. 「Bot」タブの **Privileged Gateway Intents** から **SERVER MEMBERS INTENT** を ON にする（メンバー一覧取得に必須）
 4. 「General Information」タブで `APPLICATION ID`（= `CLIENT_ID`）と `PUBLIC KEY` を控える
-5. Bot をサーバーに招待する（OAuth2 URL Generator で `bot` および `applications.commands` スコープ、`Server Members Intent` に対応する権限を付与）
+5. Bot をサーバーに招待する（OAuth2 URL Generator で `bot` および `applications.commands` スコープを選択。**Permissions は特に付与不要（未選択のままでOK）**。メンバー一覧取得に必要なのは手順3の Server Members Intent のみで、これはBotタブ側の設定です）
 
 ### 2. デプロイする（方法A・方法Bのどちらか）
 
@@ -70,6 +70,7 @@ curl -X POST https://<your-worker-url>/register-commands \
 ```
 /export_members
 ```
+メンバー一覧の流出を防ぐため、デフォルトでは「サーバー管理」権限を持つメンバーのみ実行できます（DMからの実行も不可）。実行を許可する対象は、Discordのサーバー設定 → **Integrations** → 対象アプリのコマンド設定から個別に変更できます。
 
 ## ローカル開発
 ```sh
@@ -84,6 +85,7 @@ npm run tail
 デプロイ済み Worker のリアルタイムログを確認できます。
 
 ## 変更履歴
+- 2026-07-16: セキュリティ・実運用耐性の改善（`/export_members`をサーバー管理権限保持者のみに制限、CSVフォーミュラインジェクション対策、Discord APIレート制限時の自動リトライ）
 - 2026-07-05: CloudflareのGit連携によるデプロイ手順を追加し、デプロイ時にもローカルPC不要にできるように
 - 2026-07-05: スラッシュコマンド登録をWorker内の`/register-commands`エンドポイントに統合し、ローカルNode.js環境（`.env`・登録スクリプト）が不要に
 - 2026-07-02: Cloudflare Workers（HTTP Interactions）上で完結する構成に全面リニューアル（v2.0.0）

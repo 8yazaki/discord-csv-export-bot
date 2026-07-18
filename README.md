@@ -24,7 +24,13 @@ Discord サーバーの参加者一覧を CSV 出力するボットです。**Cl
 2. 「Bot」タブでトークンを発行
 3. 「Bot」タブの **Privileged Gateway Intents** から **SERVER MEMBERS INTENT** を ON にする（メンバー一覧取得に必須）
 4. 「General Information」タブで `APPLICATION ID`（= `CLIENT_ID`）と `PUBLIC KEY` を控える
-5. Bot をサーバーに招待する（OAuth2 URL Generator で `bot` および `applications.commands` スコープを選択。**Permissions は特に付与不要（未選択のままでOK）**。メンバー一覧取得に必要なのは手順3の Server Members Intent のみで、これはBotタブ側の設定です）
+5. Bot をサーバーに招待する。以下のURLの `<CLIENT_ID>` を手順4で控えた `APPLICATION ID` に置き換え、ブラウザで開いてサーバーを選択・認証してください。
+   ```
+   https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&scope=bot+applications.commands&permissions=0
+   ```
+   - **`scope=bot` が含まれていることが重要です。** Developer Portal の「OAuth2 → URL Generator」や「Installation」タブでURLを生成する方法もありますが、特に「Installation」タブの初期設定では Guild Install のスコープが `applications.commands` のみになっていることがあり、その場合 **認証自体は成功してもBotユーザーがサーバーに参加せず、メンバー一覧に現れません**。確実に招待するには上記URLを直接使ってください。
+   - Permissions は特に付与不要です（`permissions=0` のままでOK）。メンバー一覧取得に必要なのは手順3の Server Members Intent のみで、これはBotタブ側の設定です。
+   - このBotは常時のGateway接続を持たない（HTTP Interactions方式の）ため、招待後もメンバー一覧では常に「オフライン」として表示されます。これは正常な状態です。サーバーの「オフラインメンバーを表示」設定がOFFだと見落とすので注意してください。
 
 ### 2. デプロイする（方法A・方法Bのどちらか）
 
@@ -84,7 +90,20 @@ npm run tail
 ```
 デプロイ済み Worker のリアルタイムログを確認できます。
 
+## トラブルシューティング
+
+### 認証(Authorize)は成功するのに、サーバーのメンバー一覧にBotが表示されない
+招待に使ったURLの `scope` に `bot` が含まれていない可能性が高いです（[手順5](#1-discord-developer-portal-でアプリケーションを準備)参照）。Developer Portal の「Installation」タブなどでリンクを生成すると、Guild Installのデフォルトスコープが `applications.commands` のみになっている場合があり、この場合Botユーザー自体はサーバーに参加しません。手順5のURLを使い直して再度招待してください。
+
+### Botの招待はできたが、メンバー一覧でオフラインになっている
+HTTP Interactions方式のBotは常時のGateway接続を持たないため、常にオフライン表示になります。これは正常な状態です。「オフラインメンバーを表示」設定がONになっているか確認してください。
+
+### Interactions Endpoint URL の保存時にエラーになる
+- `GET https://<your-worker-url>/` にアクセスして `Discord CSV Export Bot is running.` が返るか確認してください（Workerが正しくデプロイされているか）。
+- `DISCORD_PUBLIC_KEY` のSecretが正しく設定されているか確認してください（Bot TokenではなくPUBLIC KEYの値です）。
+
 ## 変更履歴
+- 2026-07-18: Bot招待時に `scope=bot` が抜けているとBotがサーバーに追加されない問題について、招待手順を明確化しトラブルシューティング項目を追加
 - 2026-07-16: セキュリティ・実運用耐性の改善（`/export_members`をサーバー管理権限保持者のみに制限、CSVフォーミュラインジェクション対策、Discord APIレート制限時の自動リトライ）
 - 2026-07-05: CloudflareのGit連携によるデプロイ手順を追加し、デプロイ時にもローカルPC不要にできるように
 - 2026-07-05: スラッシュコマンド登録をWorker内の`/register-commands`エンドポイントに統合し、ローカルNode.js環境（`.env`・登録スクリプト）が不要に

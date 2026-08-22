@@ -1,6 +1,7 @@
 import { verifyKey } from "discord-interactions";
-
-const DISCORD_API = "https://discord.com/api/v10";
+import { DISCORD_API, discordFetch, jsonResponse, editOriginalResponse } from "./discord.js";
+import { ROLE_SLASH_COMMANDS, handleRolemapCommand, handlePanelCommand } from "./roles/commands.js";
+import { handleRoleButton, handleRoleSelect } from "./roles/components.js";
 
 export default {
   async fetch(request, env, ctx) {
@@ -39,10 +40,32 @@ export default {
     }
 
     // APPLICATION_COMMAND
-    if (interaction.type === 2 && interaction.data?.name === "export_members") {
-      ctx.waitUntil(exportMembers(interaction, env));
-      // DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE（3秒以内に応答するため一旦保留）
-      return jsonResponse({ type: 5 });
+    if (interaction.type === 2) {
+      const name = interaction.data?.name;
+      if (name === "export_members") {
+        ctx.waitUntil(exportMembers(interaction, env));
+        // DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE（3秒以内に応答するため一旦保留）
+        return jsonResponse({ type: 5 });
+      }
+      if (name === "rolemap") {
+        return handleRolemapCommand(interaction, env);
+      }
+      if (name === "panel") {
+        return handlePanelCommand(interaction, env, ctx);
+      }
+      return new Response("Unknown command", { status: 400 });
+    }
+
+    // MESSAGE_COMPONENT（ボタン・セレクトメニュー押下）
+    if (interaction.type === 3) {
+      const customId = interaction.data?.custom_id || "";
+      if (customId.startsWith("role:")) {
+        return handleRoleButton(interaction, env);
+      }
+      if (customId.startsWith("roleselect:")) {
+        return handleRoleSelect(interaction, env, ctx);
+      }
+      return new Response("Unknown component", { status: 400 });
     }
 
     return new Response("Unknown interaction", { status: 400 });
@@ -57,6 +80,7 @@ const SLASH_COMMANDS = [
     default_member_permissions: "32",
     dm_permission: false,
   },
+  ...ROLE_SLASH_COMMANDS,
 ];
 
 // スラッシュコマンドをDiscordに登録するための管理用エンドポイント。
@@ -84,37 +108,6 @@ async function handleRegisterCommands(request, env) {
     status: res.status,
     headers: { "content-type": "application/json" },
   });
-}
-
-function jsonResponse(data) {
-  return new Response(JSON.stringify(data), {
-    headers: { "content-type": "application/json" },
-  });
-}
-
-async function discordFetch(env, path, options = {}) {
-  const maxRetries = 3;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const res = await fetch(`${DISCORD_API}${path}`, {
-      ...options,
-      headers: {
-        Authorization: `Bot ${env.DISCORD_TOKEN}`,
-        ...options.headers,
-      },
-    });
-
-    // レート制限（429）の場合は Retry-After 秒待ってからリトライする
-    if (res.status === 429 && attempt < maxRetries) {
-      const retryAfterSec = Number(res.headers.get("retry-after")) || 1;
-      await new Promise((resolve) => setTimeout(resolve, retryAfterSec * 1000));
-      continue;
-    }
-
-    if (!res.ok) {
-      throw new Error(`Discord API error ${res.status}: ${await res.text()}`);
-    }
-    return res.json();
-  }
 }
 
 async function fetchAllMembers(env, guildId) {
@@ -158,19 +151,6 @@ function buildCsv(rows) {
   }
   // Excel でも文字化けしないよう BOM を付与
   return "﻿" + lines.join("\n");
-}
-
-async function editOriginalResponse(env, interaction, { content, filename, csv }) {
-  const url = `${DISCORD_API}/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`;
-  const form = new FormData();
-  form.append("payload_json", JSON.stringify({ content }));
-  if (csv !== undefined) {
-    form.append("files[0]", new Blob([csv], { type: "text/csv" }), filename);
-  }
-  const res = await fetch(url, { method: "PATCH", body: form });
-  if (!res.ok) {
-    console.error("応答の編集に失敗しました:", await res.text());
-  }
 }
 
 async function exportMembers(interaction, env) {

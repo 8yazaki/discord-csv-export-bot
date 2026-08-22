@@ -57,6 +57,8 @@ export const ROLE_SLASH_COMMANDS = [
     description: "ロール付与パネルをこのチャンネルに投稿します",
     default_member_permissions: MANAGE_ROLES,
     dm_permission: false,
+    // Discordの仕様上、必須(required)オプションは任意オプションより前に並べる必要がある。
+    // そのため mode(必須) → role1(必須) → title/body/role2以降(任意) の順にしている。
     options: [
       {
         type: 3,
@@ -68,13 +70,14 @@ export const ROLE_SLASH_COMMANDS = [
           { name: "セレクトメニュー", value: "select" },
         ],
       },
+      { type: 8, name: "role1", description: "含めるロール 1", required: true },
       { type: 3, name: "title", description: "パネルのタイトル", required: false },
       { type: 3, name: "body", description: "パネルの説明文", required: false },
-      ...Array.from({ length: MAX_PANEL_ROLES }, (_, i) => ({
+      ...Array.from({ length: MAX_PANEL_ROLES - 1 }, (_, i) => ({
         type: 8, // ROLE
-        name: `role${i + 1}`,
-        description: `含めるロール ${i + 1}${i === 0 ? "" : "（任意）"}`,
-        required: i === 0,
+        name: `role${i + 2}`,
+        description: `含めるロール ${i + 2}（任意）`,
+        required: false,
       })),
     ],
   },

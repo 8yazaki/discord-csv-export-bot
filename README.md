@@ -47,7 +47,7 @@ Discord サーバーの参加者一覧を CSV 出力できるほか、ボタン/
 ### 使い方（管理者）
 1. `/rolemap add role:<ロール> label:<表示名> [emoji] [description] [style]` で、パネルに含めたいロールを1つずつ登録します（`@everyone` やBot連携・ブースター特典などのManagedロールは登録できません）。
 2. `/rolemap list` で登録済みロールを確認できます。不要になったら `/rolemap remove role:<ロール>` で削除します。
-3. `/panel mode:<button|select> [title] [body] role1:<ロール> [role2] ... [role20]` を実行すると、指定したロール（最大20個、`/rolemap add`で登録済みのもの限定）を含むパネルがそのチャンネルに投稿されます。パネルごとに異なるロールの組み合わせを持てるため、目的別に複数のパネルを使い分けられます。
+3. `/panel mode:<button|select> role1:<ロール> [title] [body] [role2] ... [role20]` を実行すると、指定したロール（最大20個、`/rolemap add`で登録済みのもの限定）を含むパネルがそのチャンネルに投稿されます。パネルごとに異なるロールの組み合わせを持てるため、目的別に複数のパネルを使い分けられます。
 
 ### 使い方（メンバー）
 - ボタンモード: 押すとそのロールをトグル（未所持なら付与、所持済みなら解除）します。結果は本人にのみ見えるメッセージ（ephemeral）で返されます。
@@ -152,7 +152,7 @@ curl -X POST https://<your-worker-url>/register-commands \
 /rolemap add role:<ロール> label:<表示名> [emoji] [description] [style]   # ロールを登録
 /rolemap remove role:<ロール>                                             # 登録解除
 /rolemap list                                                             # 登録済み一覧
-/panel mode:<button|select> [title] [body] role1:<ロール> [role2]...[role20]  # パネルを投稿
+/panel mode:<button|select> role1:<ロール> [title] [body] [role2]...[role20]  # パネルを投稿
 ```
 パネルに投稿されたボタン/セレクトメニューは、`MANAGE_ROLES` 権限の有無に関わらず**サーバーの全メンバー**が操作できます（自分自身へのロール付与・解除のため）。
 

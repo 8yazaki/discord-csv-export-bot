@@ -3,73 +3,115 @@
 Discord サーバーの参加者一覧を CSV 出力できるほか、ボタン/セレクトメニューでロールを付与・解除できる**ロールパネル機能**も備えたボットです。**Cloudflare Workers 上のみで動作**し、常時起動のサーバーやプロセスは不要です。
 このプログラムの99%はAIによる生成にて作成しました。
 
-## 概要
-- Discord の [HTTP Interactions](https://discord.com/developers/docs/interactions/receiving-and-responding) 方式を採用しています。スラッシュコマンドやボタン/セレクトメニューの操作が行われると Discord があなたの Worker の URL に直接 HTTPS リクエストを送り、それに応答する仕組みです（Gatewayへの常時接続は行いません）。
-- Worker のエントリポイントは [src/index.js](src/index.js) です。
-  - リクエストの署名検証（[`verifyKey`](src/index.js)）
-  - `/export_members` コマンドを一旦保留応答（`DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE`）してから、Discord REST API でメンバー一覧・ロール一覧を取得（[`fetchAllMembers`](src/index.js) / [`fetchRoleMap`](src/index.js)）
-  - CSV 文字列を組み立て（[`buildCsv`](src/index.js)）、Webhook 経由で元の応答をファイル付きで編集（[`editOriginalResponse`](src/discord.js)）
-  - `/rolemap`, `/panel` コマンドおよびボタン/セレクトメニューの操作は [src/roles/](src/roles/) 配下に分離されています（詳細は後述の[ロールパネル機能](#ロールパネル機能ボタンセレクトでロール付与解除)）
-  - スラッシュコマンドの登録も Worker 自身が担います。`POST /register-commands` に `x-admin-secret` ヘッダー付きでリクエストすると、登録済みの全コマンド（`/export_members` `/rolemap` `/panel`）をDiscordに登録します（[`handleRegisterCommands`](src/index.js)）。ローカルにNode.js実行環境を別途用意する必要はありません。
+## 目次
+- [できること](#できること)
+- [使い方](#使い方)
+  - [CSVエクスポート（`/export_members`）](#csvエクスポートexport_members)
+  - [ロールパネル（ボタン/セレクトでロールを付与・解除）](#ロールパネルボタンセレクトでロールを付与解除)
+- [セットアップ（導入手順）](#セットアップ導入手順)
+- [技術的な詳細（アーキテクチャ）](#技術的な詳細アーキテクチャ)
+- [ローカル開発 / ログの確認](#ローカル開発)
+- [トラブルシューティング](#トラブルシューティング)
+- [変更履歴](#変更履歴)
 
-## アルゴリズム
-`/export_members` 実行時、Worker（[src/index.js](src/index.js)）は以下の順で処理します。
+## できること
+| 機能 | コマンド | 誰が使える？ |
+|---|---|---|
+| 参加者一覧をCSVで出力 | `/export_members` | サーバー管理権限を持つメンバー |
+| ロール付与パネルの管理 | `/rolemap`, `/panel` | ロールの管理権限を持つメンバー |
+| パネルのボタン/セレクトでロールを付与・解除 | （パネルを操作するだけ） | サーバーの全メンバー |
 
-1. **署名検証**: リクエストヘッダーの `x-signature-ed25519` / `x-signature-timestamp` を、Discordの公開鍵で [`verifyKey`](src/index.js) を使って検証します。不正なリクエストは `401` で拒否します。
-2. **即時の保留応答**: Discordは3秒以内の応答を要求するため、実際のCSV生成は待たずに `type: 5`（`DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE`）を即座に返します。CSV生成本体（[`exportMembers`](src/index.js)）は `ctx.waitUntil()` でバックグラウンド実行に回し、応答後も処理を継続させます。
-3. **メンバー・ロールの並列取得**（[`exportMembers`](src/index.js)）
-   - [`fetchAllMembers`](src/index.js): Discord REST API の `GET /guilds/{guildId}/members` は1回の呼び出しで最大1000件までしか返さないため、`after` パラメータに直前チャンクの最後のユーザーIDを渡しながら、返却件数が1000件未満になるまでページングを繰り返して全メンバーを収集します。
-   - [`fetchRoleMap`](src/index.js): `GET /guilds/{guildId}/roles` でロール一覧を取得し、`ロールID → ロール名` の `Map` を構築します。
-   - 上記2つは `Promise.all` で並列に実行します。
-4. **共通APIラッパーでのレート制限対応**（[`discordFetch`](src/discord.js)）: Discord APIが `429`（レート制限）を返した場合、レスポンスの `Retry-After` ヘッダーの秒数だけ待機してから、最大3回まで自動リトライします。
-5. **行データへの変換**: 取得したメンバーごとに以下を組み立てます。
-   - `ユーザー名`: `discriminator` が `"0"`（新ユーザー名体系）でない場合のみ `username#discriminator` 形式にし、それ以外は `username` のみ
-   - `表示名`: サーバーニックネーム（`nick`）→ グローバル表示名（`global_name`）→ `username` の優先順で採用
-   - `ロール`: メンバーが持つロールIDから `@everyone`（ギルドIDと同一のロール）を除外し、`fetchRoleMap` で名前に変換してカンマ区切りに連結
-6. **CSV組み立て**（[`buildCsv`](src/index.js)）
-   - ヘッダー行（`ユーザー名,表示名,ロール`）と各行を生成
-   - [`csvEscape`](src/index.js) で値ごとにエスケープ処理: `"` `,` 改行を含む場合はダブルクォートで囲み、内部の `"` は `""` に置換。さらに値の先頭が `= + - @` やタブ・改行文字の場合はCSVフォーミュラインジェクション対策として先頭にシングルクォート `'` を付与し、Excel/Sheets側で数式として評価されないようにする
-   - Excelで開いた際の文字化けを防ぐため、先頭にUTF-8 BOMを付与
-7. **元の応答の編集**（[`editOriginalResponse`](src/discord.js)）: Discord Webhook API（`PATCH /webhooks/{application_id}/{token}/messages/@original`）に対し、`multipart/form-data` でメッセージ本文とCSVファイル（`members.csv`）を送信し、手順2で返した保留応答をファイル付きメッセージに差し替えます。
-8. **エラー時の挙動**: 上記のいずれかで例外が発生した場合はログ出力のうえ、保留応答を「❌ エクスポート中にエラーが発生しました。」というメッセージに差し替えます。
+ロールパネル機能は絵文字リアクション方式ではなく、Discordのボタン/セレクトメニュー（Message Components）を使っています。CSVエクスポート機能とは完全に独立しているため、ロールパネルを使わないならその分のセットアップ（D1データベース作成）は不要です。
 
-## ロールパネル機能（ボタン/セレクトでロール付与・解除）
+---
 
-サーバー内にボタンまたはセレクトメニュー付きのメッセージ（パネル）を投稿し、メンバーがそれを押すと自分自身にロールが付与・解除される機能です。CSV出力機能とは独立した機能で、CSV出力を使わない場合はセットアップ（後述のD1データベース作成）を省略できます。
+## 使い方
 
-- **絵文字リアクション方式は採用していません。** `MESSAGE_REACTION_ADD` イベントは Gateway (WebSocket) 経由でしか配信されず、常時接続を持たない Cloudflare Workers の HTTP Interactions方式では原理的に受け取れないためです。
-- 実装は [src/roles/](src/roles/) 配下にあります。
-  - [`src/roles/db.js`](src/roles/db.js): D1データベース（`role_map` / `panels` / `panel_roles` テーブル）へのCRUD
-  - [`src/roles/commands.js`](src/roles/commands.js): `/rolemap`, `/panel` コマンドのハンドラ
-  - [`src/roles/components.js`](src/roles/components.js): ボタン・セレクトメニュー押下時のロール付与/解除処理
-  - [`src/roles/ui.js`](src/roles/ui.js): Embed・ボタン・セレクトメニューの組み立て
+### CSVエクスポート（`/export_members`）
+サーバー内で実行すると、CSVファイル（`members.csv`）が返信されます。
+```
+/export_members
+```
+- 出力内容: `ユーザー名, 表示名, ロール`
+- デフォルトでは **「サーバー管理」権限を持つメンバーのみ**実行できます（DMからの実行も不可）。実行を許可する対象は、Discordのサーバー設定 → **Integrations** → 対象アプリのコマンド設定から個別に変更できます。
 
-### 使い方（管理者）
-1. `/rolemap add role:<ロール> label:<表示名> [emoji] [description] [style]` で、パネルに含めたいロールを1つずつ登録します（`@everyone` やBot連携・ブースター特典などのManagedロールは登録できません）。
-2. `/rolemap list` で登録済みロールを確認できます。不要になったら `/rolemap remove role:<ロール>` で削除します。
-3. `/panel mode:<button|select> role1:<ロール> [title] [body] [role2] ... [role20]` を実行すると、指定したロール（最大20個、`/rolemap add`で登録済みのもの限定）を含むパネルがそのチャンネルに投稿されます。パネルごとに異なるロールの組み合わせを持てるため、目的別に複数のパネルを使い分けられます。
+### ロールパネル（ボタン/セレクトでロールを付与・解除）
 
-### 使い方（メンバー）
-- ボタンモード: 押すとそのロールをトグル（未所持なら付与、所持済みなら解除）します。結果は本人にのみ見えるメッセージ（ephemeral）で返されます。
-- セレクトメニューモード: 選択した状態で確定すると、選択したロールとの差分（追加すべきロール・外すべきロール）だけをまとめて反映します。全選択解除も可能です（Discordの仕様上、開いた時点で「選択済み」の表示はされません）。
+**全体の流れは3ステップです。**
+1. `/rolemap add` で、パネルに使いたいロールを1つずつ登録する（管理者）
+2. `/panel` で、登録したロールを含むパネルをチャンネルに投稿する（管理者）
+3. メンバーがパネルのボタン/セレクトを操作すると、自分自身にロールが付与・解除される（全メンバー）
 
-### セキュリティ・実装上のポイント
-- ボタンの `custom_id`（`role:<role_id>`）はクライアント由来で改竄され得るため、押下時は必ず `role_map` に登録済みのロールかをD1で検証してから処理します（[`handleRoleButton`](src/roles/components.js)）。
-- Discordの初回応答期限は3秒のため、ボタン（REST呼び出し1回）は即時応答、パネル投稿・セレクトの差分更新（REST呼び出しが複数になり得る）は保留応答（`type:5`）してから `ctx.waitUntil()` でバックグラウンド処理し、後から結果をWebhookで書き戻します。
-- レート制限（429）時は共通ラッパー [`discordFetch`](src/discord.js) が自動リトライします（CSV出力機能と共通）。
+#### ① `/rolemap add` — ロールを登録する
+パネルに含めたいロールを、先にこのコマンドで1つずつ登録しておく必要があります。
 
-### 既知の制約
-- ロール階層: Botのロールが付与対象のロールより**上位**にないと `50013 Missing Permissions` エラーになります（後述のセットアップ参照）。
-- `/panel edit` のようなパネル編集コマンドは未実装です。ロール構成を変えたい場合は `/rolemap` を更新した上で `/panel` を投稿し直してください。
+```
+/rolemap add role:VIP label:VIP会員 emoji:🎉 description:VIP会員向けの特典ロールです style:Success（緑）
+```
 
-## 必要条件
+| オプション | 必須 | 説明 |
+|---|:---:|---|
+| `role` | ✅ | 登録したいロール（Discordのロール選択UIから選びます） |
+| `label` | ✅ | ボタンやセレクトメニューに表示される名前 |
+| `emoji` | - | 絵文字。Unicode絵文字（`🎉`）またはカスタム絵文字（`<:name:id>` / `<a:name:id>`）どちらも可 |
+| `description` | - | 説明文。**セレクトメニューモードでのみ**表示されます |
+| `style` | - | ボタンの色（**ボタンモードでのみ**使用）。`Secondary`（グレー・既定）/ `Primary`（青）/ `Success`（緑）/ `Danger`（赤） |
+
+- `@everyone` ロールは登録できません。
+- Bot連携ロール・サーバーブースト特典ロールなど、Discordが自動管理する「Managedロール」は登録できません。
+- 同じロールに対してもう一度 `/rolemap add` を実行すると、`label`/`emoji`/`description`/`style` が上書きされます。
+
+その他のサブコマンド:
+```
+/rolemap list                 # 登録済みロールの一覧を表示（ephemeral）
+/rolemap remove role:VIP      # 登録を削除
+```
+
+#### ② `/panel` — パネルを投稿する
+登録済みのロールを選んで、実際にメンバーが操作するパネルをそのチャンネルに投稿します。
+
+```
+/panel mode:ボタン role1:VIP role2:一般 title:ロール選択 body:欲しいロールのボタンを押してください
+```
+
+| オプション | 必須 | 説明 |
+|---|:---:|---|
+| `mode` | ✅ | 表示形式。`ボタン` または `セレクトメニュー` |
+| `role1` | ✅ | パネルに含める1つ目のロール（**`/rolemap add` で登録済みのものだけ**指定できます） |
+| `title` | - | パネルのタイトル |
+| `body` | - | パネルの説明文 |
+| `role2` 〜 `role20` | - | 2つ目以降のロール。**最大20個**まで指定可能 |
+
+- パネルごとに異なるロールの組み合わせを持てます。「通知ロール用パネル」「地域ロール用パネル」のように目的別に複数投稿できます。
+- 未登録のロールを指定するとエラーになり、どのロールが未登録か教えてくれます。先に `/rolemap add` で登録してください。
+- ボタンモードは5個ずつ改行され、セレクトメニューモードは1つのドロップダウンにまとまります。ロール数が多いならセレクトメニュー、少なく見た目重視ならボタンがおすすめです。
+
+#### ③ メンバーがパネルを操作する
+| モード | 操作方法 |
+|---|---|
+| ボタン | 押すたびにロールをトグルします（未所持なら付与、所持済みなら解除）。結果は本人にのみ見える通知（ephemeral）で表示されます。 |
+| セレクトメニュー | ロールを選んで確定すると、選んだ内容との差分（追加すべきロール・外すべきロール）だけがまとめて反映されます。全て未選択で確定すれば、そのパネルのロールを全て外せます。 |
+
+> Discordの仕様上、セレクトメニューを開いた時点で「今持っているロールにチェックが付いた状態」で表示することはできません（新規に選び直す形になります）。
+
+#### 権限まとめ
+| コマンド/操作 | デフォルトで実行できる人 |
+|---|---|
+| `/rolemap`, `/panel` | **ロールの管理（Manage Roles）** 権限を持つメンバー（DM不可） |
+| パネルのボタン/セレクト操作 | **サーバーの全メンバー**（自分自身へのロール付与・解除のため） |
+
+実行を許可する対象は、Discordのサーバー設定 → **Integrations** → 対象アプリのコマンド設定から個別に変更できます。
+
+---
+
+## セットアップ（導入手順）
+
+### 必要条件
 - Cloudflare アカウント（Workers を無料枠でデプロイ可能）
 - GitHub アカウント（Cloudflare の Git 連携を使う場合。このリポジトリは https://github.com/8yazaki/discord-csv-export-bot ）
 - Discord Developer Portal で作成した Bot トークン / アプリケーション ID (`CLIENT_ID`) / Public Key
 - ローカルから手動デプロイする場合のみ、`wrangler` CLI を実行するための Node.js が必要（[方法B](#方法b-ローカルからwranglerで手動デプロイする場合) 参照）
 - **ロールパネル機能を使う場合のみ**、Cloudflare D1データベース（無料枠内で利用可能）が必要です。CSV出力機能のみ使う場合は不要です。
-
-## セットアップ
 
 ### 1. Discord Developer Portal でアプリケーションを準備
 1. https://discord.com/developers/applications でアプリケーションを作成（または既存のものを使用）
@@ -83,6 +125,7 @@ Discord サーバーの参加者一覧を CSV 出力できるほか、ボタン/
    - **`scope=bot` が含まれていることが重要です。** Developer Portal の「OAuth2 → URL Generator」や「Installation」タブでURLを生成する方法もありますが、特に「Installation」タブの初期設定では Guild Install のスコープが `applications.commands` のみになっていることがあり、その場合 **認証自体は成功してもBotユーザーがサーバーに参加せず、メンバー一覧に現れません**。確実に招待するには上記URLを直接使ってください。
    - `permissions=268435456` は **Manage Roles（ロールの管理）** 権限です。ロールパネル機能（`/rolemap` `/panel`）でメンバーにロールを付与・解除するために必要です。CSVエクスポート機能のみ使う場合は `permissions=0` でも構いません（メンバー一覧取得に必要なのは手順3の Server Members Intent のみです）。
    - **ロール階層に注意してください。** Discordの仕様上、BotはBot自身より**上位**のロールを付与・解除できません。サーバー設定の「ロール」画面で、Botのロール（通常はアプリケーション名のロール）を、ロールパネルで扱いたい全てのロールより上に配置してください。配置し忘れると付与/解除時に「Botの権限が不足しています」というエラーになります。
+   - 既にBotを招待済みで権限だけ後から追加したい場合は、再招待は不要です。サーバー設定 → ロール → Botのロールの権限一覧から「ロールの管理」をONにするだけで反映されます。
    - このBotは常時のGateway接続を持たない（HTTP Interactions方式の）ため、招待後もメンバー一覧では常に「オフライン」として表示されます。これは正常な状態です。サーバーの「オフラインメンバーを表示」設定がOFFだと見落とすので注意してください。
 
 ### 2. デプロイする（方法A・方法Bのどちらか）
@@ -138,23 +181,58 @@ curl -X POST https://<your-worker-url>/register-commands \
 ```
 ロールパネル機能を使う場合は、先に手順2のD1セットアップを済ませてからこのコマンドを実行してください。D1未設定のまま `/rolemap` `/panel` を実行するとエラーになります。
 
-## 実行方法
-デプロイ後は常駐プロセス不要で、Discord からのリクエストに応じて Worker が自動実行されます。
+登録直後は候補に出るまで少し時間がかかることがあります。すぐ出ない場合はDiscordクライアントを再起動（デスクトップ版は `Ctrl+R` でも可）してみてください。
 
-サーバー内で以下を実行すると、CSV ファイルが返信されます。
-```
-/export_members
-```
-メンバー一覧の流出を防ぐため、デフォルトでは「サーバー管理」権限を持つメンバーのみ実行できます（DMからの実行も不可）。実行を許可する対象は、Discordのサーバー設定 → **Integrations** → 対象アプリのコマンド設定から個別に変更できます。
+---
 
-ロールパネル機能（D1セットアップ済みの場合）は以下のコマンドで使用できます。いずれもデフォルトでは **ロールの管理（Manage Roles）** 権限を持つメンバーのみ実行できます（DMからの実行も不可）。
-```
-/rolemap add role:<ロール> label:<表示名> [emoji] [description] [style]   # ロールを登録
-/rolemap remove role:<ロール>                                             # 登録解除
-/rolemap list                                                             # 登録済み一覧
-/panel mode:<button|select> role1:<ロール> [title] [body] [role2]...[role20]  # パネルを投稿
-```
-パネルに投稿されたボタン/セレクトメニューは、`MANAGE_ROLES` 権限の有無に関わらず**サーバーの全メンバー**が操作できます（自分自身へのロール付与・解除のため）。
+## 技術的な詳細（アーキテクチャ）
+
+このセクションはコードを読む・改修する人向けの内部実装の説明です。導入や普段の利用には読む必要はありません。
+
+### 全体構成
+- Discord の [HTTP Interactions](https://discord.com/developers/docs/interactions/receiving-and-responding) 方式を採用しています。スラッシュコマンドやボタン/セレクトメニューの操作が行われると Discord があなたの Worker の URL に直接 HTTPS リクエストを送り、それに応答する仕組みです（Gatewayへの常時接続は行いません）。
+- **絵文字リアクション方式は採用していません。** `MESSAGE_REACTION_ADD` イベントは Gateway (WebSocket) 経由でしか配信されず、常時接続を持たない Cloudflare Workers の HTTP Interactions方式では原理的に受け取れないためです。
+- ファイル構成:
+  - [`src/index.js`](src/index.js): エントリポイント。署名検証、interaction typeごとのルーティング、`/export_members` のロジック本体
+  - [`src/discord.js`](src/discord.js): Discord REST API呼び出しの共有ヘルパー（`discordFetch`, `editOriginalResponse` など）
+  - [`src/roles/`](src/roles/): ロールパネル機能一式
+    - [`db.js`](src/roles/db.js): D1データベース（`role_map` / `panels` / `panel_roles` テーブル）へのCRUD
+    - [`commands.js`](src/roles/commands.js): `/rolemap`, `/panel` コマンドのハンドラ
+    - [`components.js`](src/roles/components.js): ボタン・セレクトメニュー押下時のロール付与/解除処理
+    - [`ui.js`](src/roles/ui.js): Embed・ボタン・セレクトメニューの組み立て
+  - `POST /register-commands` に `x-admin-secret` ヘッダー付きでリクエストすると、登録済みの全コマンドをDiscordに登録します（[`handleRegisterCommands`](src/index.js)）。ローカルNode.js環境は不要です。
+
+### CSVエクスポートのアルゴリズム
+`/export_members` 実行時、Worker（[src/index.js](src/index.js)）は以下の順で処理します。
+
+1. **署名検証**: リクエストヘッダーの `x-signature-ed25519` / `x-signature-timestamp` を、Discordの公開鍵で [`verifyKey`](src/index.js) を使って検証します。不正なリクエストは `401` で拒否します。
+2. **即時の保留応答**: Discordは3秒以内の応答を要求するため、実際のCSV生成は待たずに `type: 5`（`DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE`）を即座に返します。CSV生成本体（[`exportMembers`](src/index.js)）は `ctx.waitUntil()` でバックグラウンド実行に回し、応答後も処理を継続させます。
+3. **メンバー・ロールの並列取得**（[`exportMembers`](src/index.js)）
+   - [`fetchAllMembers`](src/index.js): Discord REST API の `GET /guilds/{guildId}/members` は1回の呼び出しで最大1000件までしか返さないため、`after` パラメータに直前チャンクの最後のユーザーIDを渡しながら、返却件数が1000件未満になるまでページングを繰り返して全メンバーを収集します。
+   - [`fetchRoleMap`](src/index.js): `GET /guilds/{guildId}/roles` でロール一覧を取得し、`ロールID → ロール名` の `Map` を構築します。
+   - 上記2つは `Promise.all` で並列に実行します。
+4. **共通APIラッパーでのレート制限対応**（[`discordFetch`](src/discord.js)）: Discord APIが `429`（レート制限）を返した場合、レスポンスの `Retry-After` ヘッダーの秒数だけ待機してから、最大3回まで自動リトライします。
+5. **行データへの変換**: 取得したメンバーごとに以下を組み立てます。
+   - `ユーザー名`: `discriminator` が `"0"`（新ユーザー名体系）でない場合のみ `username#discriminator` 形式にし、それ以外は `username` のみ
+   - `表示名`: サーバーニックネーム（`nick`）→ グローバル表示名（`global_name`）→ `username` の優先順で採用
+   - `ロール`: メンバーが持つロールIDから `@everyone`（ギルドIDと同一のロール）を除外し、`fetchRoleMap` で名前に変換してカンマ区切りに連結
+6. **CSV組み立て**（[`buildCsv`](src/index.js)）
+   - ヘッダー行（`ユーザー名,表示名,ロール`）と各行を生成
+   - [`csvEscape`](src/index.js) で値ごとにエスケープ処理: `"` `,` 改行を含む場合はダブルクォートで囲み、内部の `"` は `""` に置換。さらに値の先頭が `= + - @` やタブ・改行文字の場合はCSVフォーミュラインジェクション対策として先頭にシングルクォート `'` を付与し、Excel/Sheets側で数式として評価されないようにする
+   - Excelで開いた際の文字化けを防ぐため、先頭にUTF-8 BOMを付与
+7. **元の応答の編集**（[`editOriginalResponse`](src/discord.js)）: Discord Webhook API（`PATCH /webhooks/{application_id}/{token}/messages/@original`）に対し、`multipart/form-data` でメッセージ本文とCSVファイル（`members.csv`）を送信し、手順2で返した保留応答をファイル付きメッセージに差し替えます。
+8. **エラー時の挙動**: 上記のいずれかで例外が発生した場合はログ出力のうえ、保留応答を「❌ エクスポート中にエラーが発生しました。」というメッセージに差し替えます。
+
+### ロールパネルの実装ポイント
+- **`custom_id` の改竄対策**: ボタンの `custom_id`（`role:<role_id>`）はクライアント由来で改竄され得るため、押下時は必ず `role_map` に登録済みのロールかをD1で検証してから処理します（[`handleRoleButton`](src/roles/components.js)）。
+- **3秒応答制限への対応**: ボタン（REST呼び出し1回）は即時応答、パネル投稿・セレクトの差分更新（REST呼び出しが複数になり得る）は保留応答（`type:5`）してから `ctx.waitUntil()` でバックグラウンド処理し、後から結果をWebhookで書き戻します。
+- **差分更新**: セレクトメニューでは、選択されたロール集合 `S`・パネルの対象ロール集合 `P`・メンバーの現在ロール集合 `C` から、付与すべきロール（`S - C`）と剥奪すべきロール（`(P ∩ C) - S`）だけを計算し、変更が必要なロールにのみREST呼び出しを行います。
+- **レート制限対応**: `429`時は共通ラッパー [`discordFetch`](src/discord.js) が自動リトライします（CSV出力機能と共通）。
+- **既知の制約**:
+  - `/panel edit` のようなパネル編集コマンドは未実装です。ロール構成を変えたい場合は `/rolemap` を更新した上で `/panel` を投稿し直してください。
+  - Discordの仕様上、セレクトメニューの「選択済み」状態をユーザーごとに出し分けて表示することはできません。
+
+---
 
 ## ローカル開発
 ```sh
@@ -186,7 +264,14 @@ Discordのロール階層で、Botのロールが付与対象のロールより*
 ### `/rolemap` `/panel` を実行するとエラーになる・応答がない
 D1データベースが未セットアップ、または `wrangler.toml` の `[[d1_databases]]` がコメントアウトされたままの可能性があります。[セットアップ手順2の6（方法A）／方法B末尾](#2-デプロイする方法a方法bのどちらか)を参照し、D1データベースの作成・バインディング・マイグレーション適用を行ってから `/register-commands` を再実行してください。
 
+### `/rolemap` `/panel` が候補一覧に出てこない
+`/register-commands` をまだ実行していない可能性が高いです（[セットアップ手順4](#4-スラッシュコマンドを登録)参照）。実行済みなら、Discordクライアントの再起動で反映されることが多いです。
+
+### `role:` オプションで、作成したばかりのロールが選択肢に出てこない
+これはBotコード側の問題ではなく、Discordクライアントのロールキャッシュが最新化されていないことが原因のことが多いです。ロール名の一部を入力して検索する、クライアントを再起動する、少し時間を置く、のいずれかで解消することがほとんどです。
+
 ## 変更履歴
+- 2026-08-23: READMEを再構成（使い方を先頭に、セットアップ・技術的詳細を分離して見通しを改善）
 - 2026-08-22: ロールパネル機能（`/rolemap` `/panel`、ボタン/セレクトメニューでのロール付与・解除）を追加。D1データベースが必要（CSV出力機能のみ使う場合は不要、`wrangler.toml`もデフォルトでコメントアウト）
 - 2026-07-18: Bot招待時に `scope=bot` が抜けているとBotがサーバーに追加されない問題について、招待手順を明確化しトラブルシューティング項目を追加
 - 2026-07-16: セキュリティ・実運用耐性の改善（`/export_members`をサーバー管理権限保持者のみに制限、CSVフォーミュラインジェクション対策、Discord APIレート制限時の自動リトライ）

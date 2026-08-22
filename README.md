@@ -200,6 +200,8 @@ curl -X POST https://<your-worker-url>/register-commands \
     - [`commands.js`](src/roles/commands.js): `/rolemap`, `/panel` コマンドのハンドラ
     - [`components.js`](src/roles/components.js): ボタン・セレクトメニュー押下時のロール付与/解除処理
     - [`ui.js`](src/roles/ui.js): Embed・ボタン・セレクトメニューの組み立て
+  - [`migrations/0001_init.sql`](migrations/0001_init.sql): ロールパネル機能用D1テーブル（`role_map` / `panels` / `panel_roles`）の定義。セットアップ時にD1のConsoleへ貼り付けるか、`wrangler d1 migrations apply` で適用します
+  - [`wrangler.toml`](wrangler.toml): Worker名・D1バインディングなどのCloudflare設定
   - `POST /register-commands` に `x-admin-secret` ヘッダー付きでリクエストすると、登録済みの全コマンドをDiscordに登録します（[`handleRegisterCommands`](src/index.js)）。ローカルNode.js環境は不要です。
 
 ### CSVエクスポートのアルゴリズム

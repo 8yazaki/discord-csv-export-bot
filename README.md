@@ -18,7 +18,7 @@ Discord サーバーの参加者一覧を CSV 出力できるほか、ボタン/
 | 機能 | コマンド | 誰が使える？ |
 |---|---|---|
 | 参加者一覧をCSVで出力 | `/export_members` | サーバー管理権限を持つメンバー |
-| ロール付与パネルの管理 | `/rolemap`, `/panel` | ロールの管理権限を持つメンバー |
+| ロールパネルの管理（登録・投稿） | `/rolemap`, `/panel` | ロールの管理権限を持つメンバー |
 | パネルのボタン/セレクトでロールを付与・解除 | （パネルを操作するだけ） | サーバーの全メンバー |
 
 ロールパネル機能は絵文字リアクション方式ではなく、Discordのボタン/セレクトメニュー（Message Components）を使っています。CSVエクスポート機能とは完全に独立しているため、ロールパネルを使わないならその分のセットアップ（D1データベース作成）は不要です。
@@ -146,7 +146,7 @@ Discord サーバーの参加者一覧を CSV 出力できるほか、ボタン/
    1. Cloudflare ダッシュボード → **Workers & Pages → D1 SQL Database → Create Database** でデータベースを作成（名前は任意、例: `discord-role-panel-bot`）
    2. 作成したデータベースの **Console** タブを開き、[`migrations/0001_init.sql`](migrations/0001_init.sql) の中身を貼り付けて実行し、テーブルを作成する
    3. 対象Workerの **Settings → Bindings → Add → D1 Database** で、Variable name に `DB`、Database に作成したデータベースを選んで保存する
-   4. `wrangler.toml` の `[[d1_databases]]` ブロックのコメントを外し、`database_id` を実際のIDに置き換えて `main` に push（ダッシュボードでBindingを追加しただけでは `wrangler.toml` との差分でビルド時に上書き・警告される場合があるため、リポジトリ側も揃えておくことを推奨）
+   4. `wrangler.toml` の `[[d1_databases]]` にある `database_name`/`database_id` を、作成したデータベースの値に書き換えて `main` に push（ダッシュボードでBindingを追加しただけでは `wrangler.toml` との差分でビルド時に上書き・警告される場合があるため、リポジトリ側も揃えておくことを推奨）
 
 #### 方法B: ローカルからwranglerで手動デプロイする場合
 ```sh
@@ -164,7 +164,7 @@ npm run deploy
 ```sh
 npx wrangler d1 create discord-role-panel-bot
 ```
-出力された `database_id` を `wrangler.toml` の `[[d1_databases]]` ブロック（コメントアウトされているので外す）に貼り付けてから、マイグレーションを適用して再デプロイします。
+出力された `database_id`（と `database_name`）を `wrangler.toml` の `[[d1_databases]]` ブロックに書き込んでから、マイグレーションを適用して再デプロイします。
 ```sh
 npx wrangler d1 migrations apply discord-role-panel-bot --remote
 npm run deploy
@@ -264,7 +264,7 @@ HTTP Interactions方式のBotは常時のGateway接続を持たないため、�
 Discordのロール階層で、Botのロールが付与対象のロールより**下位**にある可能性が高いです。サーバー設定の「ロール」画面で、Botのロールを付与対象ロールより上に並べ替えてください（[セットアップ手順1](#1-discord-developer-portal-でアプリケーションを準備)参照）。
 
 ### `/rolemap` `/panel` を実行するとエラーになる・応答がない
-D1データベースが未セットアップ、または `wrangler.toml` の `[[d1_databases]]` がコメントアウトされたままの可能性があります。[セットアップ手順2の6（方法A）／方法B末尾](#2-デプロイする方法a方法bのどちらか)を参照し、D1データベースの作成・バインディング・マイグレーション適用を行ってから `/register-commands` を再実行してください。
+D1データベースが未セットアップ、または `wrangler.toml` の `[[d1_databases]]` に自分の環境の `database_id` が設定されていない可能性があります。[セットアップ手順2の6（方法A）／方法B末尾](#2-デプロイする方法a方法bのどちらか)を参照し、D1データベースの作成・バインディング・マイグレーション適用を行ってから `/register-commands` を再実行してください。
 
 ### `/rolemap` `/panel` が候補一覧に出てこない
 `/register-commands` をまだ実行していない可能性が高いです（[セットアップ手順4](#4-スラッシュコマンドを登録)参照）。実行済みなら、Discordクライアントの再起動で反映されることが多いです。
